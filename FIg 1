@@ -1,0 +1,725 @@
+#Code for Fig 1
+
+# ==============================================================
+# Earth-density effects in long-baseline neutrino oscillations
+# Reconstruction of the Fig. 1 methodology
+#
+# True model  : layered Earth
+# Fit model   : constant path-averaged density
+#
+# Observable  : nu_mu -> nu_e appearance
+# Fit parameter: delta_CP
+# ==============================================================
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+
+
+# ==============================================================
+# 1. OSCILLATION PARAMETERS
+# ==============================================================
+
+theta12 = np.radians(33.44)
+theta13 = np.radians(8.57)
+theta23 = np.radians(49.2)
+
+dm21 = 7.42e-5       # eV^2
+dm31 = 2.517e-3      # eV^2
+
+delta_true = -np.pi / 2
+
+
+# ==============================================================
+# 2. PMNS MATRIX
+# ==============================================================
+
+def PMNS(delta):
+
+    s12 = np.sin(theta12)
+    c12 = np.cos(theta12)
+
+    s13 = np.sin(theta13)
+    c13 = np.cos(theta13)
+
+    s23 = np.sin(theta23)
+    c23 = np.cos(theta23)
+
+    U = np.array([
+
+        [
+            c12*c13,
+            s12*c13,
+            s13*np.exp(-1j*delta)
+        ],
+
+        [
+            -s12*c23 - c12*s23*s13*np.exp(1j*delta),
+            c12*c23 - s12*s23*s13*np.exp(1j*delta),
+            s23*c13
+        ],
+
+        [
+            s12*s23 - c12*c23*s13*np.exp(1j*delta),
+            -c12*s23 - s12*c23*s13*np.exp(1j*delta),
+            c23*c13
+        ]
+
+    ], dtype=complex)
+
+    return U
+
+
+# ==============================================================
+# 3. HAMILTONIAN
+#
+# H = [ U M^2 U^dagger + diag(a,0,0) ] / (2E)
+#
+# a = 7.56e-5 * rho * Ye * E
+#
+# E is supplied in GeV.
+#
+# Finally convert H from eV to km^-1 so that
+#
+#        exp(-i H L)
+#
+# has a dimensionless exponent when L is in km.
+# ==============================================================
+
+def Hamiltonian(E, delta, rho, anti=False):
+
+    U = PMNS(delta)
+
+    # Antineutrino:
+    # U -> U*
+    if anti:
+        U = np.conjugate(U)
+
+    # Mass-squared matrix
+    M2 = np.diag([
+        0.0,
+        dm21,
+        dm31
+    ])
+
+    # Vacuum Hamiltonian numerator
+    H_vac = U @ M2 @ np.conjugate(U.T)
+
+    # Electron fraction
+    Ye = 0.5
+
+    # Matter term in eV^2
+    a = 7.56e-5 * rho * Ye * E
+
+    # Matter potential changes sign for antineutrinos
+    if anti:
+        a = -a
+
+    H_matter = np.diag([
+        a,
+        0.0,
+        0.0
+    ])
+
+    # Convert E from GeV -> eV
+    E_eV = E * 1e9
+
+    # Hamiltonian in eV
+    H_eV = (H_vac + H_matter) / (2 * E_eV)
+
+    # hbar*c in eV km
+    hbar_c = 1.973269804e-10
+
+    # Hamiltonian in km^-1
+    H_km = H_eV / hbar_c
+
+    return H_km
+
+
+# ==============================================================
+# 4. EARTH GEOMETRY
+# ==============================================================
+
+R_EARTH = 6371.0       # km
+
+
+def radius_along_path(x, L):
+
+    # Minimum distance of the chord from Earth's centre
+    b = np.sqrt(
+        R_EARTH**2 - (L/2)**2
+    )
+
+    # Radius at position x
+    r = np.sqrt(
+        b**2 + x**2
+    )
+
+    return r
+
+
+# ==============================================================
+# 5. SIMPLIFIED FOUR-LAYER EARTH
+#
+# inner core      : r < 1220 km       -> 13 g/cm^3
+# outer core      : 1220-3480 km      -> 11 g/cm^3
+# lower mantle    : 3480-5700 km      -> 5 g/cm^3
+# upper mantle /
+# crust           : r > 5700 km       -> 3.3 g/cm^3
+# ==============================================================
+
+def earth_density(r):
+
+    if r < 1220:
+
+        return 13.0
+
+    elif r < 3480:
+
+        return 11.0
+
+    elif r < 5700:
+
+        return 5.0
+
+    else:
+
+        return 3.3
+
+
+# ==============================================================
+# 6. DENSITY PROFILE ALONG TRAJECTORY
+# ==============================================================
+
+def density_profile(L, n_steps=500):
+
+    x_values = np.linspace(
+        -L/2,
+        L/2,
+        n_steps
+    )
+
+    densities = []
+
+    for x in x_values:
+
+        r = radius_along_path(x, L)
+
+        rho = earth_density(r)
+
+        densities.append(rho)
+
+    return x_values, np.array(densities)
+
+
+# ==============================================================
+# 7. PATH-AVERAGED DENSITY
+# ==============================================================
+
+def path_average_density(L, n_steps=500):
+
+    x, rho = density_profile(
+        L,
+        n_steps
+    )
+
+    return np.mean(rho)
+
+
+# ==============================================================
+# 8. CONSTANT-DENSITY PROBABILITY
+#
+# Initial state:
+#
+# |nu_mu> = (0,1,0)^T
+#
+# Therefore
+#
+# P(nu_mu -> nu_e) = |S[0,1]|^2
+# ==============================================================
+
+def probability_constant(
+        E,
+        delta,
+        L,
+        rho,
+        anti=False):
+
+    H = Hamiltonian(
+        E,
+        delta,
+        rho,
+        anti
+    )
+
+    S = expm(
+        -1j * H * L
+    )
+
+    P_mue = np.abs(
+        S[0, 1]
+    )**2
+
+    return P_mue
+
+
+# ==============================================================
+# 9. LAYERED-EARTH PROBABILITY
+#
+# Divide the path into small pieces.
+#
+# S_total =
+#
+# S_N ... S_3 S_2 S_1
+#
+# ==============================================================
+
+def probability_layered(
+        E,
+        delta,
+        L,
+        n_steps=500,
+        anti=False):
+
+    x, rho = density_profile(
+        L,
+        n_steps
+    )
+
+    dx = L / n_steps
+
+    # Initial pure muon neutrino
+    state = np.array([
+        0.0,
+        1.0,
+        0.0
+    ], dtype=complex)
+
+    for rho_i in rho:
+
+        H = Hamiltonian(
+            E,
+            delta,
+            rho_i,
+            anti
+        )
+
+        S = expm(
+            -1j * H * dx
+        )
+
+        state = S @ state
+
+    P_mue = np.abs(
+        state[0]
+    )**2
+
+    return P_mue
+
+
+# ==============================================================
+# 10. BEAM / CROSS SECTION / EFFICIENCY
+# ==============================================================
+
+def flux(E):
+
+    return np.exp(-E / 3.0)
+
+
+def cross_section(E):
+
+    return E
+
+
+def efficiency(E):
+
+    return 0.8
+
+
+# ==============================================================
+# 11. EVENT RATE
+# ==============================================================
+
+def event_rate(E, probability):
+
+    return (
+        flux(E)
+        * cross_section(E)
+        * efficiency(E)
+        * probability
+    )
+
+
+# ==============================================================
+# 12. EVENT SPECTRUM
+# ==============================================================
+
+def make_event_spectrum(
+        E_values,
+        L,
+        delta,
+        rho=None,
+        layered=False,
+        anti=False,
+        n_steps=500):
+
+    rates = []
+
+    for E in E_values:
+
+        if layered:
+
+            P = probability_layered(
+                E,
+                delta,
+                L,
+                n_steps,
+                anti
+            )
+
+        else:
+
+            P = probability_constant(
+                E,
+                delta,
+                L,
+                rho,
+                anti
+            )
+
+        N = event_rate(
+            E,
+            P
+        )
+
+        rates.append(N)
+
+    return np.array(rates)
+
+
+# ==============================================================
+# 13. CHI-SQUARED
+# ==============================================================
+
+def chi_square(N_true, N_test):
+
+    N_true = np.asarray(N_true)
+    N_test = np.asarray(N_test)
+
+    return np.sum(
+        (N_test - N_true)**2
+        /
+        (N_true + 1.0)
+    )
+
+
+# ==============================================================
+# 14. TOTAL NEUTRINO + ANTINEUTRINO CHI-SQUARED
+# ==============================================================
+
+def total_chi_square(
+        N_true_nu,
+        N_test_nu,
+        N_true_anti,
+        N_test_anti):
+
+    chi2_nu = chi_square(
+        N_true_nu,
+        N_test_nu
+    )
+
+    chi2_anti = chi_square(
+        N_true_anti,
+        N_test_anti
+    )
+
+    return chi2_nu + chi2_anti
+
+
+# ==============================================================
+# 15. ENERGY GRID
+# ==============================================================
+
+E_values = np.linspace(
+    2.0,
+    6.0,
+    60
+)
+
+
+# ==============================================================
+# 16. DELTA_CP SCAN
+# ==============================================================
+
+delta_values = np.linspace(
+    -180.0,
+    180.0,
+    120
+)
+
+
+# ==============================================================
+# 17. FUNCTION TO FIT ONE BASELINE
+# ==============================================================
+
+def fit_baseline(
+        L,
+        n_steps=500):
+
+    print("\n===================================")
+    print(f"Baseline = {L} km")
+    print("===================================")
+
+    # ----------------------------------------------------------
+    # Path-averaged density
+    # ----------------------------------------------------------
+
+    rho_avg = path_average_density(
+        L,
+        n_steps
+    )
+
+    print(
+        f"Average density = "
+        f"{rho_avg:.3f} g/cm^3"
+    )
+
+    # ----------------------------------------------------------
+    # TRUE spectra
+    #
+    # True Earth = layered Earth
+    # True delta = -90 degrees
+    # ----------------------------------------------------------
+
+    N_true_nu = make_event_spectrum(
+        E_values,
+        L,
+        delta_true,
+        layered=True,
+        anti=False,
+        n_steps=n_steps
+    )
+
+    N_true_anti = make_event_spectrum(
+        E_values,
+        L,
+        delta_true,
+        layered=True,
+        anti=True,
+        n_steps=n_steps
+    )
+
+    # ----------------------------------------------------------
+    # Scan delta_CP
+    # ----------------------------------------------------------
+
+    chi2_values = []
+
+    for delta_deg in delta_values:
+
+        delta_rad = np.radians(
+            delta_deg
+        )
+
+        # Constant-density neutrino spectrum
+        N_test_nu = make_event_spectrum(
+            E_values,
+            L,
+            delta_rad,
+            rho=rho_avg,
+            layered=False,
+            anti=False,
+            n_steps=n_steps
+        )
+
+        # Constant-density antineutrino spectrum
+        N_test_anti = make_event_spectrum(
+            E_values,
+            L,
+            delta_rad,
+            rho=rho_avg,
+            layered=False,
+            anti=True,
+            n_steps=n_steps
+        )
+
+        # Combined chi-square
+        chi2 = total_chi_square(
+            N_true_nu,
+            N_test_nu,
+            N_true_anti,
+            N_test_anti
+        )
+
+        chi2_values.append(
+            chi2
+        )
+
+    chi2_values = np.array(
+        chi2_values
+    )
+
+    # ----------------------------------------------------------
+    # Best fit
+    # ----------------------------------------------------------
+
+    best_index = np.argmin(
+        chi2_values
+    )
+
+    best_delta = delta_values[
+        best_index
+    ]
+
+    minimum_chi2 = chi2_values[
+        best_index
+    ]
+
+    # ----------------------------------------------------------
+    # Bias
+    # ----------------------------------------------------------
+
+    bias = abs(
+        best_delta - (-90.0)
+    )
+
+    print(
+        f"Best-fit delta = "
+        f"{best_delta:.2f} degrees"
+    )
+
+    print(
+        f"Minimum chi2 = "
+        f"{minimum_chi2:.6f}"
+    )
+
+    print(
+        f"Bias = "
+        f"{bias:.2f} degrees"
+    )
+
+    return (
+        rho_avg,
+        best_delta,
+        minimum_chi2,
+        bias,
+        chi2_values
+    )
+
+
+# ==============================================================
+# 18. RUN FOR ALL BASELINES
+# ==============================================================
+
+baselines = [
+    1000,
+    2000,
+    3000,
+    4000,
+    5000,
+    7000,
+    9000,
+    12000
+]
+
+average_densities = []
+best_deltas = []
+minimum_chi2_values = []
+biases = []
+
+chi2_curves = {}
+
+
+for L in baselines:
+
+    (
+        rho_avg,
+        best_delta,
+        minimum_chi2,
+        bias,
+        chi2_values
+
+    ) = fit_baseline(
+        L,
+        n_steps=500
+    )
+
+    average_densities.append(
+        rho_avg
+    )
+
+    best_deltas.append(
+        best_delta
+    )
+
+    minimum_chi2_values.append(
+        minimum_chi2
+    )
+
+    biases.append(
+        bias
+    )
+
+    chi2_curves[L] = chi2_values
+
+
+# ==============================================================
+# 19. PRINT FINAL TABLE
+# ==============================================================
+
+print("\n")
+print("===================================================")
+print("FINAL RESULTS")
+print("===================================================")
+
+print(
+    f"{'L (km)':>10}"
+    f"{'rho_avg':>15}"
+    f"{'delta_best':>18}"
+    f"{'bias':>15}"
+)
+
+print("---------------------------------------------------")
+
+for i, L in enumerate(baselines):
+
+    print(
+        f"{L:>10}"
+        f"{average_densities[i]:>15.3f}"
+        f"{best_deltas[i]:>18.2f}"
+        f"{biases[i]:>15.2f}"
+    )
+
+
+# ==============================================================
+# 20. FIG. 1-STYLE BIAS PLOT
+# ==============================================================
+
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    baselines,
+    biases,
+    marker='o'
+)
+
+plt.xlabel(
+    "Baseline L (km)"
+)
+
+plt.ylabel(
+    r"$|\Delta\delta_{CP}|$ (degrees)"
+)
+
+plt.title(
+    r"$\delta_{CP}$ bias from constant-density approximation"
+)
+
+plt.grid()
+
+plt.tight_layout()
+
+plt.show()
+
+
+
