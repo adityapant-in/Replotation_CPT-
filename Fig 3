@@ -1,0 +1,252 @@
+Fig 3
+
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+
+# -----------------------------
+# 1. Neutrino parameters
+# -----------------------------
+
+theta12 = np.radians(33.44)
+theta13 = np.radians(8.57)
+theta23 = np.radians(49.2)
+
+delta = np.radians(-90)
+
+dm21 = 7.42e-5
+dm31 = 2.517e-3
+
+Ye = 0.5
+R = 6371                 # Earth radius in km
+km_to_eV = 5.07e9       # 1 km = 5.07e9 eV^-1
+
+
+# -----------------------------
+# 2. PMNS matrix
+# -----------------------------
+
+def PMNS():
+
+    s12, c12 = np.sin(theta12), np.cos(theta12)
+    s13, c13 = np.sin(theta13), np.cos(theta13)
+    s23, c23 = np.sin(theta23), np.cos(theta23)
+
+    return np.array([
+        [c12*c13,
+         s12*c13,
+         s13*np.exp(-1j*delta)],
+
+        [-s12*c23 - c12*s23*s13*np.exp(1j*delta),
+         c12*c23 - s12*s23*s13*np.exp(1j*delta),
+         s23*c13],
+
+        [s12*s23 - c12*c23*s13*np.exp(1j*delta),
+         -c12*s23 - s12*c23*s13*np.exp(1j*delta),
+         c23*c13]
+    ])
+
+
+# -----------------------------
+# 3. Hamiltonian
+# -----------------------------
+
+def Hamiltonian(E, rho):
+
+    U = PMNS()
+
+    M2 = np.diag([0, dm21, dm31])
+
+    E_eV = E * 1e9
+
+    H_vac = U @ M2 @ U.conj().T / (2 * E_eV)
+
+    V = 7.56e-14 * rho * Ye
+
+    H_mat = np.diag([V, 0, 0])
+
+    return H_vac + H_mat
+
+
+# -----------------------------
+# 4. Earth density
+# -----------------------------
+
+def density(r):
+
+    if r < 1220:
+        return 13.0
+
+    elif r < 3480:
+        return 11.0
+
+    elif r < 5700:
+        return 5.0
+
+    else:
+        return 3.3
+
+
+def earth_profile(L, steps=400):
+
+    dx = L / steps
+    rhos = []
+
+    for i in range(steps):
+
+        x = i * dx
+        y = x - L/2
+
+        r = np.sqrt(R**2 - (L/2)**2 + y**2)
+
+        rhos.append(density(r))
+
+    return np.array(rhos)
+
+
+# -----------------------------
+# 5. Neutrino propagation
+# -----------------------------
+
+def probability(E, L, constant=False):
+
+    steps = 400
+    dx = L / steps
+
+    state = np.array([0, 1, 0], dtype=complex)
+
+    rhos = earth_profile(L)
+
+    if constant:
+        rho = 4.289
+        rhos = np.full(steps, rho)
+
+    for rho in rhos:
+
+        H = Hamiltonian(E, rho)
+
+        U = expm(-1j * H * dx * km_to_eV)
+
+        state = U @ state
+
+    return abs(state[0])**2
+
+
+# -----------------------------
+# 6. Event rate
+# -----------------------------
+
+def flux(E):
+    return np.exp(-E/3)
+
+
+def cross_section(E):
+    return E
+
+
+T = 1e5
+systematic = 0.05
+
+
+def event_rate(E, L, constant=False):
+
+    P = probability(E, L, constant)
+
+    return flux(E) * cross_section(E) * P * T
+
+
+# -----------------------------
+# 7. Calculate spectra
+# -----------------------------
+
+L = 7000
+
+energies = np.linspace(2, 6, 200)
+
+N_const = np.array([
+    event_rate(E, L, True)
+    for E in energies
+])
+
+N_prem = np.array([
+    event_rate(E, L, False)
+    for E in energies
+])
+
+
+# -----------------------------
+# 8. Uncertainties
+# -----------------------------
+
+def error(N):
+
+    statistical = np.sqrt(N)
+
+    systematic_error = systematic * N
+
+    return np.sqrt(
+        statistical**2 + systematic_error**2
+    )
+
+
+err_const = error(N_const)
+err_prem = error(N_prem)
+
+
+# -----------------------------
+# 9. Plot
+# -----------------------------
+
+plt.figure(figsize=(8, 5.5))
+
+plt.plot(
+    energies,
+    N_const,
+    '--',
+    label=r'Constant density ($\rho=4.289$ g/cm$^3$)'
+)
+
+plt.plot(
+    energies,
+    N_prem,
+    '-',
+    label='PREM profile'
+)
+
+plt.fill_between(
+    energies,
+    N_const - err_const,
+    N_const + err_const,
+    alpha=0.15
+)
+
+plt.fill_between(
+    energies,
+    N_prem - err_prem,
+    N_prem + err_prem,
+    alpha=0.15
+)
+
+plt.xlabel('Energy (GeV)')
+plt.ylabel('Event rate (arb. units)')
+
+plt.xlim(2, 6)
+
+plt.title(
+    r'$L=7000$ km, Normal Ordering, $\delta_{CP}=-90^\circ$'
+)
+
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.tight_layout()
+
+plt.savefig(
+    'event_rate_comparison.png',
+    dpi=300
+)
+
+plt.show()
