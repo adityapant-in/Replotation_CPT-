@@ -1,0 +1,837 @@
+Fig 2
+
+# ============================================================
+# Updated Chi Square
+# Reproduction of authors' Delta-Chi-Square figure
+# ============================================================
+
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+
+
+# ============================================================
+# Plot settings
+# ============================================================
+
+matplotlib.rcParams.update({
+    "text.usetex": False,
+    "font.family": "serif",
+    "font.serif": ["DejaVu Serif", "Times New Roman", "Times"],
+    "font.size": 14,
+    "axes.labelsize": 16,
+    "axes.titlesize": 16,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 12,
+    "legend.framealpha": 0.9,
+    "legend.edgecolor": "0.5",
+    "lines.linewidth": 2.0,
+    "axes.linewidth": 1.2,
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "xtick.major.size": 6,
+    "ytick.major.size": 6,
+    "xtick.minor.size": 3,
+    "ytick.minor.size": 3,
+    "xtick.minor.visible": True,
+    "ytick.minor.visible": True,
+    "xtick.top": True,
+    "ytick.right": True,
+    "figure.dpi": 200,
+    "savefig.dpi": 300,
+    "savefig.bbox": "tight",
+})
+
+
+# ============================================================
+# Oscillation parameters
+# ============================================================
+
+theta12 = np.radians(33.44)
+theta13 = np.radians(8.57)
+theta23 = np.radians(49.2)
+
+dm21 = 7.42e-5
+dm31 = 2.517e-3
+
+delta_true = -np.pi / 2
+
+
+# ============================================================
+# Energy
+# ============================================================
+
+E_vals = np.linspace(
+    2.0,
+    6.0,
+    40
+)
+
+dE = E_vals[1] - E_vals[0]
+
+
+# ============================================================
+# Normalisation
+# ============================================================
+
+NORM = 1e4
+
+
+# ============================================================
+# Beam functions
+# ============================================================
+
+def flux(E):
+
+    return np.exp(-E / 3)
+
+
+def cross_section(E):
+
+    return E
+
+
+def efficiency(E):
+
+    return 0.8
+
+
+# ============================================================
+# PMNS matrix
+# ============================================================
+
+def PMNS(delta):
+
+    c12 = np.cos(theta12)
+    s12 = np.sin(theta12)
+
+    c13 = np.cos(theta13)
+    s13 = np.sin(theta13)
+
+    c23 = np.cos(theta23)
+    s23 = np.sin(theta23)
+
+    U = np.array([
+
+        [
+            c12 * c13,
+            s12 * c13,
+            s13 * np.exp(-1j * delta)
+        ],
+
+        [
+            -s12 * c23
+            - c12 * s23 * s13 * np.exp(1j * delta),
+
+            c12 * c23
+            - s12 * s23 * s13 * np.exp(1j * delta),
+
+            s23 * c13
+        ],
+
+        [
+            s12 * s23
+            - c12 * c23 * s13 * np.exp(1j * delta),
+
+            -c12 * s23
+            - s12 * c23 * s13 * np.exp(1j * delta),
+
+            c23 * c13
+        ]
+
+    ], dtype=complex)
+
+    return U
+
+
+# ============================================================
+# Hamiltonian
+# ============================================================
+
+def Hamiltonian(
+        E,
+        delta,
+        rho,
+        anti=False):
+
+    U = PMNS(delta)
+
+    # Mass-squared matrix
+
+    M2 = np.diag([
+        0,
+        dm21,
+        dm31
+    ])
+
+    # Vacuum Hamiltonian
+
+    H_vac = (
+        U
+        @ M2
+        @ np.conjugate(U.T)
+    )
+
+    # Matter term
+
+    A = (
+        7.6e-5
+        * rho
+        * E
+    )
+
+    # Antineutrino:
+    # V -> -V
+
+    if anti:
+
+        A = -A
+
+    H_matter = np.diag([
+        A,
+        0,
+        0
+    ])
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Keep the authors' convention:
+    #
+    #        H = (...) / (2E)
+    #
+    # together with the 1.27 factor in the
+    # evolution operator.
+    # --------------------------------------------------------
+
+    H = (
+        H_vac
+        + H_matter
+    ) / (2 * E)
+
+    return H
+
+
+# ============================================================
+# Earth radius
+# ============================================================
+
+R = 6371.0
+
+
+# ============================================================
+# Four-layer Earth model
+# ============================================================
+
+def prem_density_at_r(r):
+
+    if r < 1220:
+
+        return 13.0
+
+    elif r < 3480:
+
+        return 11.0
+
+    elif r < 5700:
+
+        return 5.0
+
+    else:
+
+        return 3.3
+
+
+# ============================================================
+# Density profile
+# ============================================================
+
+def prem_density_profile(
+        L,
+        n_steps=300):
+
+    dx = L / n_steps
+
+    profile = []
+
+    for i in range(n_steps):
+
+        # Position at centre of each step
+
+        y = (
+            -L / 2
+            + (i + 0.5) * dx
+        )
+
+        # Distance of closest approach
+
+        b = np.sqrt(
+            R**2
+            - (L / 2)**2
+        )
+
+        # Radius from Earth's centre
+
+        r = np.sqrt(
+            b**2 + y**2
+        )
+
+        profile.append(
+            prem_density_at_r(r)
+        )
+
+    return np.array(profile), dx
+
+
+# ============================================================
+# PREM / layered probability
+# ============================================================
+
+def prob_prem(
+        E,
+        delta,
+        rhos,
+        dx,
+        anti=False):
+
+    # Initial pure nu_mu state
+
+    state = np.array([
+        0,
+        1,
+        0
+    ], dtype=complex)
+
+    # Propagate through every layer
+
+    for rho in rhos:
+
+        H = Hamiltonian(
+            E,
+            delta,
+            rho,
+            anti
+        )
+
+        S = expm(
+            -1j
+            * 1.27
+            * H
+            * dx
+        )
+
+        state = S @ state
+
+    # nu_mu -> nu_e
+
+    return np.abs(
+        state[0]
+    )**2
+
+
+# ============================================================
+# Constant-density probability
+# ============================================================
+
+def prob_const(
+        E,
+        delta,
+        L,
+        rho,
+        anti=False):
+
+    H = Hamiltonian(
+        E,
+        delta,
+        rho,
+        anti
+    )
+
+    S = expm(
+        -1j
+        * 1.27
+        * H
+        * L
+    )
+
+    return np.abs(
+        S[0, 1]
+    )**2
+
+
+# ============================================================
+# Event rates: layered Earth
+# ============================================================
+
+def rates_prem(
+        delta,
+        rhos,
+        dx,
+        anti=False):
+
+    rates = []
+
+    for E in E_vals:
+
+        P = prob_prem(
+            E,
+            delta,
+            rhos,
+            dx,
+            anti
+        )
+
+        N = (
+            NORM
+            * flux(E)
+            * cross_section(E)
+            * efficiency(E)
+            * P
+            * dE
+        )
+
+        rates.append(N)
+
+    return np.array(rates)
+
+
+# ============================================================
+# Event rates: constant density
+# ============================================================
+
+def rates_const(
+        delta,
+        L,
+        rho,
+        anti=False):
+
+    rates = []
+
+    for E in E_vals:
+
+        P = prob_const(
+            E,
+            delta,
+            L,
+            rho,
+            anti
+        )
+
+        N = (
+            NORM
+            * flux(E)
+            * cross_section(E)
+            * efficiency(E)
+            * P
+            * dE
+        )
+
+        rates.append(N)
+
+    return np.array(rates)
+
+
+# ============================================================
+# Pearson chi-square
+# ============================================================
+
+def chi_square(
+        test,
+        true):
+
+    return np.sum(
+        (test - true)**2
+        /
+        (true + 1.0)
+    )
+
+
+# ============================================================
+# Baselines
+# ============================================================
+
+selected = [
+    3000,
+    5000,
+    9000
+]
+
+
+# ============================================================
+# Delta_CP scan
+# ============================================================
+
+delta_scan = np.linspace(
+    -np.pi,
+    np.pi,
+    120
+)
+
+deg = np.degrees(
+    delta_scan
+)
+
+
+# ============================================================
+# Plot colours
+# ============================================================
+
+colors = [
+    "#2166AC",
+    "#D6604D",
+    "#1A7D3B"
+]
+
+
+# ============================================================
+# Store results
+# ============================================================
+
+results = {}
+
+
+# ============================================================
+# Main calculation
+# ============================================================
+
+for L in selected:
+
+    print(
+        f"Computing L = {L} km ..."
+    )
+
+    # --------------------------------------------------------
+    # Earth density profile
+    # --------------------------------------------------------
+
+    rhos, dx = prem_density_profile(
+        L,
+        n_steps=300
+    )
+
+    # --------------------------------------------------------
+    # Path-averaged density
+    # --------------------------------------------------------
+
+    rho_avg = np.mean(rhos)
+
+    print(
+        "Average density =",
+        round(rho_avg, 3),
+        "g/cm^3"
+    )
+
+    # --------------------------------------------------------
+    # True spectra
+    #
+    # True Earth = layered
+    # True delta = -90 degrees
+    # --------------------------------------------------------
+
+    true_nu = rates_prem(
+        delta_true,
+        rhos,
+        dx,
+        anti=False
+    )
+
+    true_anu = rates_prem(
+        delta_true,
+        rhos,
+        dx,
+        anti=True
+    )
+
+    # --------------------------------------------------------
+    # Chi-square arrays
+    # --------------------------------------------------------
+
+    chi2_const = []
+
+    chi2_prem = []
+
+    # --------------------------------------------------------
+    # Scan delta_CP
+    # --------------------------------------------------------
+
+    for delta in delta_scan:
+
+        # ====================================================
+        # Constant-density prediction
+        # ====================================================
+
+        test_nu_const = rates_const(
+            delta,
+            L,
+            rho_avg,
+            anti=False
+        )
+
+        test_anu_const = rates_const(
+            delta,
+            L,
+            rho_avg,
+            anti=True
+        )
+
+        chi_const = (
+            chi_square(
+                test_nu_const,
+                true_nu
+            )
+            +
+            chi_square(
+                test_anu_const,
+                true_anu
+            )
+        )
+
+        chi2_const.append(
+            chi_const
+        )
+
+        # ====================================================
+        # Layered-Earth prediction
+        # ====================================================
+
+        test_nu_prem = rates_prem(
+            delta,
+            rhos,
+            dx,
+            anti=False
+        )
+
+        test_anu_prem = rates_prem(
+            delta,
+            rhos,
+            dx,
+            anti=True
+        )
+
+        chi_prem = (
+            chi_square(
+                test_nu_prem,
+                true_nu
+            )
+            +
+            chi_square(
+                test_anu_prem,
+                true_anu
+            )
+        )
+
+        chi2_prem.append(
+            chi_prem
+        )
+
+    # Convert to numpy arrays
+
+    chi2_const = np.array(
+        chi2_const
+    )
+
+    chi2_prem = np.array(
+        chi2_prem
+    )
+
+    # --------------------------------------------------------
+    # Convert chi-square to Delta chi-square
+    # --------------------------------------------------------
+
+    chi2_const = (
+        chi2_const
+        - np.min(chi2_const)
+    )
+
+    chi2_prem = (
+        chi2_prem
+        - np.min(chi2_prem)
+    )
+
+    # --------------------------------------------------------
+    # Normalise
+    # --------------------------------------------------------
+
+    chi2_const = (
+        chi2_const
+        / np.max(chi2_const)
+    )
+
+    chi2_prem = (
+        chi2_prem
+        / np.max(chi2_prem)
+    )
+
+    # Store
+
+    results[L] = (
+        chi2_const,
+        chi2_prem
+    )
+
+
+# ============================================================
+# Figure
+# ============================================================
+
+fig, ax = plt.subplots(
+    figsize=(9.0, 6.0)
+)
+
+
+# ============================================================
+# Plot curves
+# ============================================================
+
+for i, L in enumerate(selected):
+
+    chi2_const, chi2_prem = results[L]
+
+    label_L = f"{L:,} km"
+
+    # Constant density
+
+    ax.plot(
+        deg,
+        chi2_const,
+        linestyle="--",
+        color=colors[i],
+        linewidth=2.2,
+        label=f"Const. density, $L = {label_L}$"
+    )
+
+    # Layered Earth
+
+    ax.plot(
+        deg,
+        chi2_prem,
+        linestyle="-",
+        color=colors[i],
+        linewidth=2.2,
+        alpha=0.85,
+        label=f"PREM, $L = {label_L}$"
+    )
+
+    # Shaded difference
+
+    ax.fill_between(
+        deg,
+        chi2_const,
+        chi2_prem,
+        alpha=0.10,
+        color=colors[i]
+    )
+
+
+# ============================================================
+# True delta
+# ============================================================
+
+ax.axvline(
+    -90,
+    color="black",
+    linestyle="--",
+    linewidth=1.6,
+    label=r"True $\delta_{CP} = -90^\circ$",
+    zorder=5
+)
+
+
+# ============================================================
+# Labels
+# ============================================================
+
+ax.set_xlabel(
+    r"$\delta_{CP}$ (degrees)",
+    labelpad=8
+)
+
+ax.set_ylabel(
+    r"$\Delta\chi^2$ (normalised)",
+    labelpad=8
+)
+
+
+# ============================================================
+# Limits
+# ============================================================
+
+ax.set_xlim(
+    -180,
+    180
+)
+
+ax.set_ylim(
+    -0.04,
+    1.18
+)
+
+ax.set_xticks(
+    np.arange(
+        -180,
+        181,
+        45
+    )
+)
+
+ax.set_yticks(
+    np.arange(
+        0,
+        1.1,
+        0.2
+    )
+)
+
+
+# ============================================================
+# Grid
+# ============================================================
+
+ax.grid(
+    True,
+    which="major",
+    linestyle=":",
+    linewidth=0.7,
+    alpha=0.55
+)
+
+
+# ============================================================
+# Legend
+# ============================================================
+
+ax.legend(
+    ncol=2,
+    loc="upper right",
+    fontsize=11,
+    framealpha=0.92,
+    edgecolor="0.45",
+    handlelength=2.4,
+    columnspacing=1.0,
+    handletextpad=0.6,
+    borderpad=0.7
+)
+
+
+# ============================================================
+# Save
+# ============================================================
+
+plt.tight_layout(
+    pad=0.9
+)
+
+outfile = "figure_chi_squared.png"
+
+plt.savefig(
+    outfile,
+    dpi=300
+)
+
+print(
+    f"Saved -> {outfile}"
+)
+
+plt.show()
